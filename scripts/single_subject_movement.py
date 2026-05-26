@@ -1,5 +1,5 @@
 # %% [markdown]
-# 
+#
 # # Quantifying movement in a single subject
 #
 # Here we take a look at movement data from a single subject before and
@@ -14,7 +14,15 @@ import json
 from pathlib import Path
 import pandas as pd
 import numpy as np
+import holoviews as hv
+from holoviews import opts
 import hvplot.pandas
+
+hv.extension("bokeh")
+import panel
+
+panel.extension(comms="vscode")
+import cv2
 
 # %% [markdown]
 #
@@ -25,6 +33,9 @@ subject = "bianca"
 session = "RR20rev.01"
 task = "RR20rev"
 rawdata_path = Path("../rawdata")
+rawdata_path = Path(
+    r"/mnt/c/Users/cnolan/UNSW/ACAN-ACAN2026 - Documents/Modules/theme3_conditioning/rawdata"
+)
 
 # %% [markdown]
 #
@@ -56,16 +67,10 @@ recordings
 
 # %% [markdown]
 #
-# firston and laston are the times of the first and last frames
-
-
-# %% [markdown]
-#
 # We can read in a DeepLabCut tracking file (HDF5 format) using the
 # pandas read_hdf function.
 
 # %%
-
 dlc_path = (
     rawdata_path
     / f"sub-{subject}"
@@ -107,37 +112,98 @@ tracking
 
 
 # %% [markdown]
-
 #
-# This data has already been filtered based on the likelihood column
-# using a median filter. We can just drop the likelihood column. At the
-# same time, we can filter out all the frames outside the first and last
-# LED flashes.
+# The frames are numbered, but we care more about time. The frame times
+# are provided in a separate CSV file, so let's read that and use it.
 
-# %%
-tracking = tracking.loc[
-    recordings.loc["A", "leverin"] :, (slice(None), ["x", "y"])
-].sort_index(axis=1)
+# %% [markdown]
+frame_times_path = (
+    rawdata_path
+    / f"sub-{subject}"
+    / f"ses-{session}"
+    / f"sub-{subject}_ses-{session}_task-{task}_acq-A_sync.csv"
+)
+frame_times = pd.read_csv(frame_times_path, header=None, names=["time"])
+tracking.index = pd.to_timedelta(frame_times["time"], unit="s")
 tracking
 
 # %% [markdown]
 #
-# DLC uses -1 to indicate missing data in this case, which we can
-# replace with NaN (not a number).
+# These frame times are relative to the start of the video, not the
+# start of the session. That doesn't matter for now, but spoiler alert:
+# we might need to consider movement in relation to the med events
+# later. So let's adjust these frame times to be relative to the start
+# of the session as per the events files. The start frame of the session
+# is given in the "leverin" column of the recordings table we loaded
+# above.
 
-# %%
-tracking = tracking.mask(tracking < 0)
+tracking.index = tracking.index - tracking.index[recordings.loc["A", "leverin"] - 1]
+tracking = tracking.loc[pd.Timedelta(0, unit="s"):]
+tracking
 
 # %% [markdown]
 #
-# Let's also get the time in seconds from the start of the session.
+# To make things simple for now, let's only look at the neck position of
+# the animal.
 
 # %%
-tracking["time"] = (
-    tracking.index.get_level_values("frame_id") - recordings.loc["A", "leverin"]
-) / 30
-tracking.set_index("time", append=True, inplace=True)
-tracking
+neck = tracking.loc[:, ("neck")]
+neck
+
+# %% [markdown]
+#
+# At this point we can plot the animal's position over time. Holoviews
+# is the library underlying the "hvplot" functionality you saw in the
+# first exercise - we've imported holoviews into the "hv" namespace.
+# You can see the kinds of plots you can generate with holoviews here:
+# https://holoviews.org/gallery/
+
+
+# %%
+video_path = (
+    rawdata_path
+    / f"sub-{subject}"
+    / f"ses-{session}"
+    / f"sub-{subject}_ses-{session}_task-{task}_acq-A.mp4"
+)
+cap = cv2.VideoCapture(video_path)
+for _ in range(recordings.loc["A", "leverin"]):
+    _, _ = cap.read()
+ret, frame = cap.read()
+h, w, _ = frame.shape
+# neckA = tracking.loc[("A"), ("neck", ("x", "y"))].droplevel(0, axis=1)
+# For some reason the x-axis is flipped as well as the y axis?
+(
+    (
+        hv.RGB(frame[::-1, :, ::-1], bounds=(0, 0, w, h))
+        * hv.Path(neck.loc[:, ("x", "y")])
+    ).opts(data_aspect=1, frame_width=400)
+)
+
+# %% [markdown]
+#
+# This shows us the location of the animal's neck over the session, but
+# likely you'll notice some large jumps in the position. These are
+# coming from frames where the animal tracking was unsuccessful (DLC
+# sets these values to -1). We can get rid of these, and also smooth the
+# data by removing points that deeplabcut was not confident about and
+# subsequently applying a median filter (and discard the likelihood
+# column since we won't be using it anymore).
+
+# %%
+neck = (
+    neck.mask(neck["likelihood"] < 0.6)
+    .rolling(window=pd.Timedelta(seconds=0.2), min_periods=1)
+    .median()
+    .drop(columns="likelihood")
+)
+
+(
+    (
+        hv.RGB(frame[::-1, :, ::-1], bounds=(0, 0, w, h))
+        * hv.Path(neck.loc[:, ("x", "y")])
+    ).opts(data_aspect=1, frame_width=400)
+)
 
 # %% [markdown]
 #
@@ -186,64 +252,25 @@ json_paths = {
 dlc_paths = {
     "A": (
         rawdata_path
-    / f"sub-{subject}"
-    / f"ses-{session}"
-    / f"sub-{subject}_ses-{session}_task-{task}_acq-ADLC_HrnetW32_medass_topviewmouseAug7shuffle3_detector_best-170_snapshot_best-170.h5"
+        / f"sub-{subject}"
+        / f"ses-{session}"
+        / f"sub-{subject}_ses-{session}_task-{task}_acq-ADLC_HrnetW32_medass_topviewmouseAug7shuffle3_detector_best-170_snapshot_best-170.h5"
     ),
-
     "B": (
         rawdata_path
-    / f"sub-{subject}"
-    / f"ses-{session}"
-    / f"sub-{subject}_ses-{session}_task-{task}_acq-BDLC_HrnetW32_medass_topviewmouseAug7shuffle3_detector_best-170_snapshot_best-170.h5"
+        / f"sub-{subject}"
+        / f"ses-{session}"
+        / f"sub-{subject}_ses-{session}_task-{task}_acq-BDLC_HrnetW32_medass_topviewmouseAug7shuffle3_detector_best-170_snapshot_best-170.h5"
     ),
 }
 
 tracking_dict = {
-    acq: load_track_session(
-        dlc_path,
-        recordings.loc[acq, "leverin"]
-    )
+    acq: load_track_session(dlc_path, recordings.loc[acq, "leverin"])
     for acq, dlc_path in dlc_paths.items()
 }
 tracking = pd.concat(tracking_dict, names=["acq"])
 tracking
 
-# %% [markdown]
-#
-# At this point we can plot the animal's position over time. Holoviews
-# is the library underlying the "hvplot" functionality you saw in the
-# first exercise.
-
-# %%
-import holoviews as hv
-from holoviews import opts
-
-hv.extension("bokeh")
-import panel
-
-panel.extension(comms="vscode")
-import cv2
-
-# %%
-video_path = (
-    rawdata_path
-    / f"sub-{subject}"
-    / f"ses-{session}"
-    / f"sub-{subject}_ses-{session}_task-{task}_acq-A.mp4"
-)
-cap = cv2.VideoCapture(video_path)
-for _ in range(recordings.loc["A", "leverin"]):
-    _, _ = cap.read()
-ret, frame = cap.read()
-h, w, _ = frame.shape
-neckA = tracking.loc[("A"), ("neck", ("x", "y"))].droplevel(0, axis=1)
-# For some reason the x-axis is flipped as well as the y axis?
-(
-    (hv.RGB(frame[::-1, :, ::-1], bounds=(0, 0, w, h)) * hv.Path(neckA)).opts(
-        data_aspect=1, frame_width=400
-    )
-)
 
 # %%
 
@@ -400,6 +427,7 @@ clf = LogisticRegressionCV(cv=40, max_iter=10000, class_weight="balanced").fit(
 # well it performs on its own training data (i.e. how well it can
 # identify left and right lever presses based only on the speed on the neck).
 
+# %%
 clf.score(lp_beta.values, lp_beta.index.get_level_values("event_id"))
 
 # %% [markdown]
@@ -408,6 +436,8 @@ clf.score(lp_beta.values, lp_beta.index.get_level_values("event_id"))
 # it making more false predictions for left or right lever presses? We
 # do this by compariing the true labels and the labels predicted by the
 # trained classifer.
+
+# %%
 pd.DataFrame(
     confusion_matrix(
         lp_beta.index.get_level_values("event_id"),
@@ -417,4 +447,5 @@ pd.DataFrame(
     index=pd.Index(["llp", "rlp"], name="true"),
     columns=pd.Index(["llp", "rlp"], name="predicted"),
 )
+
 # %%
