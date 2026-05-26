@@ -1,5 +1,5 @@
 # %% [markdown]
-#
+# 
 # # Quantifying movement in a single subject
 #
 # Here we take a look at movement data from a single subject before and
@@ -23,7 +23,7 @@ import hvplot.pandas
 # %%
 subject = "bianca"
 session = "RR20rev.01"
-task = "RR20"
+task = "RR20rev"
 rawdata_path = Path("../rawdata")
 
 # %% [markdown]
@@ -107,6 +107,7 @@ tracking
 
 
 # %% [markdown]
+
 #
 # This data has already been filtered based on the likelihood column
 # using a median filter. We can just drop the likelihood column. At the
@@ -144,7 +145,7 @@ tracking
 
 
 # %%
-def load_track_session(dlc_path, firston, laston, firstmed):
+def load_track_session(dlc_path, firston):
     """Load one session analysed by DeepLabCut into a DataFrame"""
     try:
         df = pd.read_hdf(dlc_path)
@@ -167,7 +168,6 @@ def load_track_session(dlc_path, firston, laston, firstmed):
 
 # %%
 
-
 json_paths = {
     "A": (
         rawdata_path
@@ -186,24 +186,23 @@ json_paths = {
 dlc_paths = {
     "A": (
         rawdata_path
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / f"sub-{subject}_ses-{session}_task-{task}_acq-A_vidcroppedDLC_HrnetW32_acanJan28shuffle5_detector_360_snapshot_110_filtered.h5"
+    / f"sub-{subject}"
+    / f"ses-{session}"
+    / f"sub-{subject}_ses-{session}_task-{task}_acq-ADLC_HrnetW32_medass_topviewmouseAug7shuffle3_detector_best-170_snapshot_best-170.h5"
     ),
+
     "B": (
         rawdata_path
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / f"sub-{subject}_ses-{session}_task-{task}_acq-B_vidcroppedDLC_HrnetW32_acanJan28shuffle5_detector_360_snapshot_110_filtered.h5"
+    / f"sub-{subject}"
+    / f"ses-{session}"
+    / f"sub-{subject}_ses-{session}_task-{task}_acq-BDLC_HrnetW32_medass_topviewmouseAug7shuffle3_detector_best-170_snapshot_best-170.h5"
     ),
 }
 
 tracking_dict = {
     acq: load_track_session(
         dlc_path,
-        recordings.loc[acq, "firston"],
-        recordings.loc[acq, "laston"],
-        recordings.loc[acq, "firstmed"],
+        recordings.loc[acq, "leverin"]
     )
     for acq, dlc_path in dlc_paths.items()
 }
@@ -231,10 +230,10 @@ video_path = (
     rawdata_path
     / f"sub-{subject}"
     / f"ses-{session}"
-    / f"sub-{subject}_ses-{session}_task-{task}_acq-A_vidcropped.mp4"
+    / f"sub-{subject}_ses-{session}_task-{task}_acq-A.mp4"
 )
 cap = cv2.VideoCapture(video_path)
-for _ in range(recordings.loc["A", "firston"]):
+for _ in range(recordings.loc["A", "leverin"]):
     _, _ = cap.read()
 ret, frame = cap.read()
 h, w, _ = frame.shape
