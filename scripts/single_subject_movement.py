@@ -5,10 +5,6 @@
 # Here we take a look at movement data from a single subject before and
 # after reversal.
 
-# %% [markdown]
-#
-#
-
 # %%
 import json
 from pathlib import Path
@@ -137,6 +133,7 @@ tracking
 # is given in the "leverin" column of the recordings table we loaded
 # above.
 
+# %%
 tracking.index = tracking.index - tracking.index[recordings.loc["A", "leverin"] - 1]
 tracking = tracking.loc[pd.Timedelta(0, unit="s"):]
 tracking
@@ -209,22 +206,38 @@ neck = (
 #
 # We can pull all that together into a function.
 
-
 # %%
-def load_track_session(dlc_path, firston):
+def load_track_session(subject, session, task, acq):
     """Load one session analysed by DeepLabCut into a DataFrame"""
+    data_path = (
+        rawdata_path
+        / f"sub-{subject}"
+        / f"ses-{session}"
+        / f"sub-{subject}_ses-{session}_task-{task}_acq-{acq}DLC_HrnetW32_medass_topviewmouseAug7shuffle3_detector_best-170_snapshot_best-170.h5"
+    )
+    frame_times_path = (
+        rawdata_path
+        / f"sub-{subject}"
+        / f"ses-{session}"
+        / f"sub-{subject}_ses-{session}_task-{task}_acq-{acq}_sync.csv"
+    )
     try:
-        df = pd.read_hdf(dlc_path)
+        df = pd.read_hdf(data_path)
+        frame_times = pd.read_csv(frame_times_path, header=None, names=["time"])
+        df.index = pd.to_timedelta(frame_times["time"], unit="s")
     except FileNotFoundError:
-        print(f"File not found: {dlc_path}")
+        print(f"File not found: {data_path}")
         return None
     df.columns = df.columns.droplevel(0)
-    df.index.name = "frame_id"
-    df = df.loc[firston:, (slice(None), ["x", "y"])].sort_index(axis=1)
-    # Drop the likelihood column and substitute NaN for -1
-    df = df.mask(df < 0)
-    df["time"] = (df.index.get_level_values("frame_id") - firston) / 30
-    df.set_index("time", append=True, inplace=True)
+    df.index = df.index - df.index[recordings.loc[acq, "leverin"] - 1]
+    df = df.loc[pd.Timedelta(0, unit="s"):]
+    df = df.loc[:, ("neck")]
+    df = (
+        df.mask(df["likelihood"] < 0.6)
+        .rolling(window=pd.Timedelta(seconds=0.2), min_periods=1)
+        .median()
+        .drop(columns="likelihood")
+    )
     return df
 
 
@@ -233,46 +246,18 @@ def load_track_session(dlc_path, firston):
 # So now we can just load the tracking data for both acquisitions.
 
 # %%
-
-json_paths = {
-    "A": (
-        rawdata_path
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / f"sub-{subject}_ses-{session}_task-{task}_acq-A.json"
-    ),
-    "B": (
-        rawdata_path
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / f"sub-{subject}_ses-{session}_task-{task}_acq-B.json"
-    ),
-}
-
-dlc_paths = {
-    "A": (
-        rawdata_path
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / f"sub-{subject}_ses-{session}_task-{task}_acq-ADLC_HrnetW32_medass_topviewmouseAug7shuffle3_detector_best-170_snapshot_best-170.h5"
-    ),
-    "B": (
-        rawdata_path
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / f"sub-{subject}_ses-{session}_task-{task}_acq-BDLC_HrnetW32_medass_topviewmouseAug7shuffle3_detector_best-170_snapshot_best-170.h5"
-    ),
-}
+sessions = [
+    (subject, session, task, "A"),
+    (subject, session, task, "B"),
+]
 
 tracking_dict = {
-    acq: load_track_session(dlc_path, recordings.loc[acq, "leverin"])
-    for acq, dlc_path in dlc_paths.items()
+    acq: load_track_session(sub, ses, task, acq)
+    for sub, ses, task, acq in sessions
 }
-tracking = pd.concat(tracking_dict, names=["acq"])
-tracking
+neck = pd.concat(tracking_dict, names=["acq"])
+neck
 
-
-# %%
 
 # %% [markdown]
 #
@@ -328,12 +313,16 @@ events
 # %%
 def get_event_windows(df, onset, window_range=(-0.5, 0.0)):
     nearest_i = np.argmin(np.abs(df.index.get_level_values("time") - onset))
-    nearest_frame = df.index.get_level_values("frame_id")[nearest_i]
+    # nearest_frame = df.index.get_level_values("frame_id")[nearest_i]
     frame_range = np.rint(np.array(window_range) * 30).astype(int)
-    fs, fe = frame_range + nearest_frame
-    ev_window = df.loc[(slice(fs, fe), slice(None)), :].copy()
-    ev_window["window_offset"] = np.arange(
+    fs, fe = frame_range + nearest_i
+    ev_window = df.iloc[fs:fe, :].copy()
+    print(ev_window)
+    print(np.arange(
         frame_range[0], frame_range[1] + 1, dtype=int
+    ))
+    ev_window["window_offset"] = np.arange(
+        frame_range[0] + 1, frame_range[1] + 1, dtype=int
     )
     return ev_window.set_index("window_offset")
 
@@ -343,10 +332,9 @@ def get_event_windows(df, onset, window_range=(-0.5, 0.0)):
 # Let's get the windows for the neck position right before lever press.
 
 # %%
-neck = tracking.loc[:, ("neck", ("x", "y"))].droplevel(0, axis=1)
 event_cols = ["acq", "onset", "event_id"]
 lp_events_df = events.query('event_id.isin(["llp", "rlp"])').reset_index()
-lp_events_df["onset"] = lp_events_df["onset"].dt.total_seconds()
+# lp_events_df["onset"] = lp_events_df["onset"].dt.total_seconds()
 lp_windows_df = lp_events_df.groupby(event_cols)[event_cols].apply(
     lambda x: get_event_windows(neck.loc[(x.iloc[0].acq), :], x.iloc[0].onset)
 )
@@ -375,18 +363,17 @@ lp_neck_paths = list(
 
 # %%
 speed = (
-    tracking.sort_index()
+    neck.sort_index()
     .groupby("acq", group_keys=False)
     .apply(
         lambda x: (
             x.diff()
             .pow(2)
-            .stack("bodyparts", future_stack=True)
             .sum(skipna=False, axis=1)
             .pow(0.5)
-            .unstack("bodyparts")
         )
     )
+    .rename("speed")
 )
 speed
 
@@ -395,7 +382,7 @@ speed
 # Now we can plot the speed over the session.
 
 # %%
-speed.hvplot.line(y="neck", x="time", by="acq", frame_width=600, alpha=0.5)
+speed.hvplot.line(y="speed", x="time", by="acq", frame_width=600, alpha=0.5)
 
 
 # %% [markdown]
@@ -406,7 +393,7 @@ speed.hvplot.line(y="neck", x="time", by="acq", frame_width=600, alpha=0.5)
 # %%
 lp_windows_df = lp_events_df.groupby(event_cols)[event_cols].apply(
     lambda x: get_event_windows(
-        speed.loc[(x.iloc[0].acq), ["neck", "mid_back"]], x.iloc[0].onset
+        speed.loc[(x.iloc[0].acq)].to_frame(), x.iloc[0].onset
     )
 )
 lp_beta = lp_windows_df.unstack("window_offset")
@@ -434,8 +421,8 @@ clf.score(lp_beta.values, lp_beta.index.get_level_values("event_id"))
 #
 # We can also take a look at _how_ the classifier is making errors, is
 # it making more false predictions for left or right lever presses? We
-# do this by compariing the true labels and the labels predicted by the
-# trained classifer.
+# do this by comparing the true labels and the labels predicted by the
+# trained classifier.
 
 # %%
 pd.DataFrame(
