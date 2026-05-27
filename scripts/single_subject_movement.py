@@ -30,9 +30,6 @@ session = "RR20rev.01"
 task = "RR20rev"
 acq = "A"
 rawdata_path = Path("../rawdata")
-rawdata_path = Path(
-    r"/mnt/c/Users/cnolan/UNSW/ACAN-ACAN2026 - Documents/Modules/theme3_conditioning/rawdata"
-)
 
 
 # %% [markdown]
@@ -390,5 +387,64 @@ pd.DataFrame(
     index=pd.Index(["llp", "rlp"], name="true"),
     columns=pd.Index(["llp", "rlp"], name="predicted"),
 )
+
+# %% [markdown]
+# We can now see how well our classifier does across sessions. The code
+# below demonstrates how we can use our existing functions to get the data
+# for all sessions.
+
+# %%
+sessions = [
+    ("RR20prerev.02", "RR20prerev"),
+    ("RR20prerev.03", "RR20prerev"),
+    ("RR20rev.01", "RR20rev"),
+]
+
+# %%
+tracking_dict = {
+    (session, acq): load_track_session(subject, session, task, acq)
+    for session, task in sessions
+    for acq in ["A", "B"]
+}
+neck = pd.concat(tracking_dict, names=["session", "acq"])
+neck
+
+# %%
+events_dict = {
+    (session, acq): load_events_session(subject, session, task, acq)
+    for session, task in sessions
+    for acq in ["A", "B"]
+}
+events = pd.concat(events_dict, names=["session", "acq"])
+events
+
+# %%
+speed = (
+    neck.sort_index()
+    .groupby(["session", "acq"], group_keys=False)
+    .apply(lambda x: (x.diff().pow(2).sum(skipna=False, axis=1).pow(0.5)))
+    .rename("speed")
+)
+speed
+
+# %%
+event_cols = ["session", "acq", "onset", "event_id"]
+lp_events_df = events.query('event_id.isin(["llp", "rlp"])').reset_index()
+lp_windows_df = lp_events_df.groupby(event_cols)[event_cols].apply(
+    lambda x: get_event_windows(speed.loc[(x.iloc[0].session, x.iloc[0].acq)].to_frame(), x.iloc[0].onset)
+)
+lp_beta = lp_windows_df.unstack("window_offset").dropna()
+lp_beta
+
+# %% [markdown]
+#
+# We can now easily select out data from a specific session as
+# demonstrated below. Can you score the results of other session using
+# the classifier we've already built? Hint: you don't need to create a
+# new LogisticRegressionCV object, you can just use the "score" method
+# of the existing one.
+
+# %%
+lp_beta.loc[("RR20rev.01")]
 
 # %%
