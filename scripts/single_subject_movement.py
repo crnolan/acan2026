@@ -28,38 +28,43 @@ import cv2
 subject = "bianca"
 session = "RR20rev.01"
 task = "RR20rev"
+acq = "A"
 rawdata_path = Path("../rawdata")
 rawdata_path = Path(
     r"/mnt/c/Users/cnolan/UNSW/ACAN-ACAN2026 - Documents/Modules/theme3_conditioning/rawdata"
 )
+
+
+# %% [markdown]
+#
+# All our files are in a common format with just a different suffix for
+# the content of the file. e.g.
+# `rawdata/sub-bianca/ses-RR20rev.01/sub-bianca_ses-RR20rev.01_task-RR20rev_acq-A`
+# is common and then we have different suffixes for the video, the DLC
+# tracking, the events, etc.
+#
+# Let's define a function to generate file paths.
+
+
+# %%
+def get_file_path(subject, session, task, acq, suffix):
+    return (
+        rawdata_path
+        / f"sub-{subject}"
+        / f"ses-{session}"
+        / f"sub-{subject}_ses-{session}_task-{task}_acq-{acq}{suffix}"
+    )
+
 
 # %% [markdown]
 #
 # Now we can load up some metadata about our acquisitions.
 
 # %%
-
-json_paths = {
-    "A": (
-        rawdata_path
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / f"sub-{subject}_ses-{session}_task-{task}_acq-A.json"
-    ),
-    "B": (
-        rawdata_path
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / f"sub-{subject}_ses-{session}_task-{task}_acq-B.json"
-    ),
-}
-recordings_dict = {}
-for acq, json_path in json_paths.items():
-    with open(json_path) as f:
-        recordings_dict[acq] = pd.Series(json.load(f))
-recordings = pd.DataFrame(recordings_dict).T
-recordings.index.name = "acq"
-recordings
+json_path = get_file_path(subject, session, task, acq, ".json")
+with open(json_path) as f:
+    recording_info = pd.Series(json.load(f))
+recording_info
 
 # %% [markdown]
 #
@@ -67,27 +72,15 @@ recordings
 # pandas read_hdf function.
 
 # %%
-dlc_path = (
-    rawdata_path
-    / f"sub-{subject}"
-    / f"ses-{session}"
-    / f"sub-{subject}_ses-{session}_task-{task}_acq-ADLC_HrnetW32_medass_topviewmouseAug7shuffle3_detector_best-170_snapshot_best-170.h5"
+dlc_path = get_file_path(
+    subject,
+    session,
+    task,
+    acq,
+    "DLC_HrnetW32_medass_topviewmouseAug7shuffle3_detector_best-170_snapshot_best-170.h5",
 )
 tracking = pd.read_hdf(dlc_path)
 tracking
-
-# %% [markdown]
-#
-# It initially looks like there is no data, but that is the very start
-# and end of the tracking session. Let's look in the middle.
-#
-# `len(tracking)` gives the number of rows in the table, and the `iloc`
-# method allows us to access rows by index. We can use the notation
-# `start:end` to request a range of rows.
-
-# %%
-# This will give us the middle(ish) 10 rows
-tracking.iloc[(len(tracking) // 2) : ((len(tracking) // 2) + 10)]
 
 # %% [markdown]
 #
@@ -112,13 +105,8 @@ tracking
 # The frames are numbered, but we care more about time. The frame times
 # are provided in a separate CSV file, so let's read that and use it.
 
-# %% [markdown]
-frame_times_path = (
-    rawdata_path
-    / f"sub-{subject}"
-    / f"ses-{session}"
-    / f"sub-{subject}_ses-{session}_task-{task}_acq-A_sync.csv"
-)
+# %%
+frame_times_path = get_file_path(subject, session, task, acq, "_sync.csv")
 frame_times = pd.read_csv(frame_times_path, header=None, names=["time"])
 tracking.index = pd.to_timedelta(frame_times["time"], unit="s")
 tracking
@@ -134,8 +122,8 @@ tracking
 # above.
 
 # %%
-tracking.index = tracking.index - tracking.index[recordings.loc["A", "leverin"] - 1]
-tracking = tracking.loc[pd.Timedelta(0, unit="s"):]
+tracking.index = tracking.index - tracking.index[recording_info.loc["leverin"] - 1]
+tracking = tracking.loc[pd.Timedelta(0, unit="s") :]
 tracking
 
 # %% [markdown]
@@ -157,14 +145,9 @@ neck
 
 
 # %%
-video_path = (
-    rawdata_path
-    / f"sub-{subject}"
-    / f"ses-{session}"
-    / f"sub-{subject}_ses-{session}_task-{task}_acq-A.mp4"
-)
+video_path = get_file_path(subject, session, task, acq, ".mp4")
 cap = cv2.VideoCapture(video_path)
-for _ in range(recordings.loc["A", "leverin"]):
+for _ in range(recording_info.loc["leverin"]):
     _, _ = cap.read()
 ret, frame = cap.read()
 h, w, _ = frame.shape
@@ -206,21 +189,21 @@ neck = (
 #
 # We can pull all that together into a function.
 
+
 # %%
 def load_track_session(subject, session, task, acq):
     """Load one session analysed by DeepLabCut into a DataFrame"""
-    data_path = (
-        rawdata_path
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / f"sub-{subject}_ses-{session}_task-{task}_acq-{acq}DLC_HrnetW32_medass_topviewmouseAug7shuffle3_detector_best-170_snapshot_best-170.h5"
+    data_path = get_file_path(
+        subject,
+        session,
+        task,
+        acq,
+        "DLC_HrnetW32_medass_topviewmouseAug7shuffle3_detector_best-170_snapshot_best-170.h5",
     )
-    frame_times_path = (
-        rawdata_path
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / f"sub-{subject}_ses-{session}_task-{task}_acq-{acq}_sync.csv"
-    )
+    frame_times_path = get_file_path(subject, session, task, acq, "_sync.csv")
+    json_path = get_file_path(subject, session, task, acq, ".json")
+    with open(json_path) as f:
+        recording_info = pd.Series(json.load(f))
     try:
         df = pd.read_hdf(data_path)
         frame_times = pd.read_csv(frame_times_path, header=None, names=["time"])
@@ -229,8 +212,8 @@ def load_track_session(subject, session, task, acq):
         print(f"File not found: {data_path}")
         return None
     df.columns = df.columns.droplevel(0)
-    df.index = df.index - df.index[recordings.loc[acq, "leverin"] - 1]
-    df = df.loc[pd.Timedelta(0, unit="s"):]
+    df.index = df.index - df.index[recording_info.loc["leverin"] - 1]
+    df = df.loc[pd.Timedelta(0, unit="s") :]
     df = df.loc[:, ("neck")]
     df = (
         df.mask(df["likelihood"] < 0.6)
@@ -246,14 +229,8 @@ def load_track_session(subject, session, task, acq):
 # So now we can just load the tracking data for both acquisitions.
 
 # %%
-sessions = [
-    (subject, session, task, "A"),
-    (subject, session, task, "B"),
-]
-
 tracking_dict = {
-    acq: load_track_session(sub, ses, task, acq)
-    for sub, ses, task, acq in sessions
+    acq: load_track_session(subject, session, task, acq) for acq in ["A", "B"]
 }
 neck = pd.concat(tracking_dict, names=["acq"])
 neck
@@ -269,37 +246,25 @@ neck
 
 
 # %%
-def load_events_session(events_path, block):
+def load_events_session(subject, session, task, acq):
     """Load one session analysed by DeepLabCut into a DataFrame"""
+    json_path = get_file_path(subject, session, task, acq, ".json")
+    with open(json_path) as f:
+        recording_info = pd.Series(json.load(f))
+    events_path = get_file_path(subject, session, task, acq, "_events.csv")
     try:
         df = pd.read_csv(events_path)
     except FileNotFoundError:
         print(f"File not found: {events_path}")
         return None
-    df = df.replace({"lp": "llp" if block[0] == "L" else "rlp"})
+    df = df.replace({"lp": "llp" if recording_info["block"][0] == "L" else "rlp"})
     df["onset"] = pd.to_timedelta(df["onset"], unit="s")
     return df.fillna(0.01).set_index("onset")
 
 
 # %%
-events_paths = {
-    "A": (
-        rawdata_path
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / f"sub-{subject}_ses-{session}_task-{task}_acq-A_events.csv"
-    ),
-    "B": (
-        rawdata_path
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / f"sub-{subject}_ses-{session}_task-{task}_acq-B_events.csv"
-    ),
-}
-
 events_dict = {
-    acq: load_events_session(events_path, recordings.loc[acq, "block"])
-    for acq, events_path in events_paths.items()
+    acq: load_events_session(subject, session, task, acq) for acq in ["A", "B"]
 }
 events = pd.concat(events_dict, names=["acq"])
 events
@@ -317,10 +282,6 @@ def get_event_windows(df, onset, window_range=(-0.5, 0.0)):
     frame_range = np.rint(np.array(window_range) * 30).astype(int)
     fs, fe = frame_range + nearest_i
     ev_window = df.iloc[fs:fe, :].copy()
-    print(ev_window)
-    print(np.arange(
-        frame_range[0], frame_range[1] + 1, dtype=int
-    ))
     ev_window["window_offset"] = np.arange(
         frame_range[0] + 1, frame_range[1] + 1, dtype=int
     )
@@ -365,14 +326,7 @@ lp_neck_paths = list(
 speed = (
     neck.sort_index()
     .groupby("acq", group_keys=False)
-    .apply(
-        lambda x: (
-            x.diff()
-            .pow(2)
-            .sum(skipna=False, axis=1)
-            .pow(0.5)
-        )
-    )
+    .apply(lambda x: (x.diff().pow(2).sum(skipna=False, axis=1).pow(0.5)))
     .rename("speed")
 )
 speed
@@ -392,20 +346,22 @@ speed.hvplot.line(y="speed", x="time", by="acq", frame_width=600, alpha=0.5)
 
 # %%
 lp_windows_df = lp_events_df.groupby(event_cols)[event_cols].apply(
-    lambda x: get_event_windows(
-        speed.loc[(x.iloc[0].acq)].to_frame(), x.iloc[0].onset
-    )
+    lambda x: get_event_windows(speed.loc[(x.iloc[0].acq)].to_frame(), x.iloc[0].onset)
 )
-lp_beta = lp_windows_df.unstack("window_offset")
+lp_beta = lp_windows_df.unstack("window_offset").dropna()
 lp_beta
 
 # %%
 from sklearn.linear_model import LogisticRegressionCV
 from sklearn.metrics import confusion_matrix
 
-clf = LogisticRegressionCV(cv=40, max_iter=10000, class_weight="balanced").fit(
-    lp_beta.values, lp_beta.index.get_level_values("event_id")
-)
+clf = LogisticRegressionCV(
+    cv=40,
+    max_iter=10000,
+    class_weight="balanced",
+    l1_ratios=(0,),
+    use_legacy_attributes=False,
+).fit(lp_beta.values, lp_beta.index.get_level_values("event_id"))
 
 
 # %% [markdown]
